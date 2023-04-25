@@ -1,0 +1,1573 @@
+
+This Notebook is for the WNV prediction challenge through the CDC. Predict WNV case burden in each state at one month lead times throughout the summer. Starting at the end of April predict May, June, July, August, Sep, Nov, Oct, Dec.
+
+```{r Libraries}
+library(ggplot2)
+library(dplyr)
+library(sf)
+library(tidyverse)
+library(maps)
+library(ncdf4)
+library(raster)
+library(lubridate)
+```
+
+
+```{r WNV Data and Plots}
+setwd("/Users/maxbeal/Desktop/CDC_ForecastChallenge/")
+df<-read.csv("WNV_forecasting_challenge_state-month_cases.csv")
+
+
+#Climatology
+clim<-df %>% group_by(month) %>% summarize(total_cases=sum(count))
+
+ggplot() + 
+  geom_line(data=clim, aes(x=month,y=total_cases)) +
+  ggtitle("U.S. WNV Climatology") +
+  theme_bw()
+
+
+ggplot(data=df, aes(x=as.factor(month),y=count)) + 
+  geom_boxplot() +
+  ggtitle("U.S. WNV Climatology, by state") +
+  theme_bw()
+
+
+stclim<-df %>% group_by(month,state) %>% summarize(total_cases=sum(count))
+
+ggplot() + 
+  geom_line(data=stclim, aes(x=month,y=total_cases,color=state)) +
+  ggtitle("U.S. WNV Climatology, by state") +
+  theme_bw()
+
+
+
+#Timeseries
+ts<-df %>% group_by(year) %>% summarize(total_cases=sum(count))
+
+ggplot() + 
+  geom_line(data=ts, aes(x=year,y=total_cases))+
+  ggtitle("U.S. WNV Timeseries") +
+  theme_bw()
+
+
+
+stts<-df %>% group_by(year,state) %>% summarize(total_cases=sum(count))
+
+ggplot() + 
+  geom_line(data=stts, aes(x=year,y=total_cases,color=state)) +
+  geom_line(data=ts, aes(x=year,y=total_cases)) +
+  ggtitle("U.S. WNV Timeseries, by state") +
+  theme_bw()
+
+
+st<-df %>% group_by(state) %>% summarize(total_cases=sum(count))
+
+ggplot(data=df, aes(x=state,y=count)) + 
+  geom_boxplot() +
+  ggtitle("U.S. WNV by state") +
+  theme_bw()
+
+
+correlStore = list()
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+correlStore=append(correlStore,list(outFrame))
+
+predStore = list()
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+predStore = append(predStore,list(predFrame))
+
+```
+
+Correlate by month
+
+```{r Autocorrelations by month}
+
+# load required packages
+library(tidyverse)
+
+# read in your dataset (I'm assuming it's in a CSV file)
+my_data <- read.csv("WNV_forecasting_challenge_state-month_cases.csv")
+
+
+# define a function to calculate the correlation between two months
+corr_between_months <- function(month1, month2) {
+    c1<-as.vector(hold %>% filter(month == month1) %>% dplyr::select(count))
+    c2<-as.vector(hold %>% filter(month == month2) %>% dplyr::select(count))
+    cor.test(c1$count,c2$count)
+}
+
+
+
+corOut=data.frame("PredictorMonth"=NA,"PredictandMonth"=NA,"cor"=NA,"pval"=NA,"State"=NA)
+
+for (j in 1:49) {
+  state=unique(my_data$state)[j]
+  hold = my_data[my_data$state==state,] # Subset State
+  for (current_month in c(5:10)) {
+    Cr=corr_between_months(current_month-1, current_month) #Correlate Apr w/ May, etc through October
+    loop=data.frame("PredictorMonth"=current_month,
+               "PredictandMonth"=current_month+1,
+               "cor"=as.numeric(Cr$estimate),
+               "pval"=as.numeric(Cr$p.value),
+               "State"=state)
+    corOut=rbind(corOut,loop)
+    
+  }
+  
+}
+
+corOut$sig=corOut$pval<0.05
+corOut=corOut[-1,]
+ggplot(data = corOut, aes(x = State, y = as.factor(PredictorMonth), fill = cor)) +
+  geom_tile() +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations 1 month lag",
+       x = "State",
+       y = "Predictand month")+
+  geom_point(data = corOut, aes(x = State, y = as.factor(PredictorMonth), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+corOut1=corOut
+corOut1$variable = "Lag1"
+
+#Month - 2
+corOut=data.frame("PredictorMonth"=NA,"PredictandMonth"=NA,"cor"=NA,"pval"=NA,"State"=NA)
+
+for (j in 1:49) {
+  state=unique(my_data$state)[j]
+  hold = my_data[my_data$state==state,] # Subset State
+  for (current_month in c(5:10)) {
+    Cr=corr_between_months(current_month-2, current_month) #Correlate Apr w/ May, etc through October
+    loop=data.frame("PredictorMonth"=current_month,
+               "PredictandMonth"=current_month+1,
+               "cor"=as.numeric(Cr$estimate),
+               "pval"=as.numeric(Cr$p.value),
+               "State"=state)
+    corOut=rbind(corOut,loop)
+    
+  }
+  
+}
+
+corOut$sig=corOut$pval<0.05
+corOut=corOut[-1,]
+ggplot() +
+  geom_tile(data = corOut, aes(x = State, y = as.factor(PredictorMonth), fill = cor)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations 2 month lag",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = corOut, aes(x = State, y = as.factor(PredictorMonth), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+
+corOut2=corOut
+corOut2$variable = "Lag2"
+
+```
+
+```{r Autocorrelations by year}
+library(lmtest)
+# define a function to calculate the correlation between two months
+corr_between_years <- function(month1) {
+    c1<-hold %>% filter(month == month1) %>% dplyr::select(count)
+    c2<-hold %>% filter(month == month1) %>% dplyr::select(count)
+    
+    c1=c1$count[-1]
+    c2=c2$count[-nrow(c2)]
+    
+    # calculate the correlation coefficient and p-value between the two arrays
+    correlation <- cor(c1, c2)
+    p_value <- cor.test(c1, c2)$p.value
+    
+    # return the correlation coefficient, p-value, and max month index
+    return(list(correlation = correlation, p_value = p_value, month_index = month))
+
+}
+
+#Year 1
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+
+
+for (j in 1:49) {
+  state=unique(df$state)[j]
+  hold = df[df$state==state,] # Subset State
+  for (current_month in c(5:10)) {
+    
+    
+    Cr=corr_between_years(current_month) #Correlate Apr w/ May, etc through October
+    
+    
+    loop=data.frame("correlation"=Cr$correlation,
+               "p_value"=Cr$p_value,
+               "month_index"=current_month,
+               "predictor"="lag1cor","state"=state)
+    
+    outFrame=rbind(outFrame,data.frame(loop))
+    
+    c2<-hold %>% filter(month == current_month) %>% dplyr::select(count,year)
+    c2=c2[-nrow(c2),]
+    predFrame=rbind(predFrame,data.frame("month_index"=current_month,
+                               "predictor"="lag1cor",
+                               "state"=state,
+                               "value"=c2$count,
+                               "year"=c2$year))
+    
+  }
+  
+}
+
+outFrame$sig=outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations Lag 1 year",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+
+correlStore=append(correlStore,list(outFrame))
+
+predStore = append(predStore,list(predFrame))
+
+
+
+```
+
+
+
+```{r Era5 Temperature Processing, warning=FALSE}
+#For April prediction
+usa <- st_as_sf(maps::map("state", fill=TRUE, plot =FALSE))
+ggplot(usa) +
+  geom_sf(color = "#2b2b2b", fill = "white", size=0.125) +
+  coord_sf(crs = st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +a=6370997 +b=6370997 +units=m +no_defs"), datum = NA) 
+
+#Precipitation raster and cropping
+rast<-brick("/Volumes/Data Drive/era_5/temp_mon/era5temp.nc")
+aoi = usa
+t.aoi<-crop(rast, aoi)
+
+#pull out months used as predictors
+jan<-t.aoi[[grep(paste0(".01."),names(t.aoi),fixed=TRUE)]]
+feb<-t.aoi[[grep(paste0(".02."),names(t.aoi),fixed=TRUE)]]
+mar<-t.aoi[[grep(paste0(".03."),names(t.aoi),fixed=TRUE)]]
+apr<-t.aoi[[grep(paste0(".04."),names(t.aoi),fixed=TRUE)]]
+may<-t.aoi[[grep(paste0(".05."),names(t.aoi),fixed=TRUE)]]
+jun<-t.aoi[[grep(paste0(".06."),names(t.aoi),fixed=TRUE)]]
+jul<-t.aoi[[grep(paste0(".07."),names(t.aoi),fixed=TRUE)]]
+aug<-t.aoi[[grep(paste0(".08."),names(t.aoi),fixed=TRUE)]]
+sep<-t.aoi[[grep(".09.",names(t.aoi),fixed=TRUE)]]
+oct<-t.aoi[[grep(".10.",names(t.aoi),fixed=TRUE)]]
+
+#Aggregate months pre-may
+prcp=brick(stack(jan,feb,mar,apr))
+pyrs<-as.numeric(substr(names(prcp),2,5))
+
+outbrick = brick()
+for (year in unique(pyrs)) {
+  print(year)
+  hold<-mean(prcp[[which(pyrs==year)]])
+  outbrick<-stack(outbrick,hold)
+}
+
+prcp<-brick(outbrick)
+
+
+#Correlate JFMA in each state with may, jun, ... dec
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+#Correlation function
+corfun <- function(static_array, changing_array, month) {
+  # subset the changing array to include only months 5 through 12
+  changing_array_subset <- changing_array[changing_array$month==month,"count"]
+  
+  # calculate the correlation coefficient and p-value between the two arrays
+  correlation <- cor(static_array, changing_array_subset)
+  p_value <- cor.test(static_array, changing_array_subset)$p.value
+  
+  # return the correlation coefficient, p-value, and max month index
+  return(list(correlation = correlation, p_value = p_value, month_index = month))
+}
+
+
+
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+for (j in 1:48) {
+  state=statecode[j]
+  stateT=statename[grep(state, state.abb)]
+  
+  if (state=="DC") {
+    next()
+  }
+
+  print(state)
+  print(stateT)
+  
+  cr<-crop(prcp,usa[usa$ID==stateT,])
+  ms <- mask(cr,usa[usa$ID==stateT,])
+  
+  prcp_array<-colMeans(values(ms),na.rm=T)
+  
+  hold = df[df$state==state,] # Subset State
+  
+  for (month_index in c(5:12)) {
+    
+    loop=corfun(prcp_array,hold,month_index)
+    loop=append(loop,list(predictor="temp"))
+    loop=append(loop,list(state=state))
+    
+    outFrame=rbind(outFrame,data.frame(loop))
+    predFrame=rbind(predFrame,data.frame("month_index"=month_index,
+                               "predictor"="temp",
+                               "state"=state,
+                               "value"=prcp_array,
+                               "year"=unique(hold$year)))
+    
+    
+  }
+  
+}
+
+outFrame$sig = outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations mean temp",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+correlStore=append(correlStore,list(outFrame))
+
+predStore = append(predStore,list(predFrame))
+
+
+```
+
+
+
+```{r Era5 Precipitation processing, warning=FALSE}
+
+#For April prediction
+usa <- st_as_sf(maps::map("state", fill=TRUE, plot =FALSE))
+ggplot(usa) +
+  geom_sf(color = "#2b2b2b", fill = "white", size=0.125) +
+  coord_sf(crs = st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +a=6370997 +b=6370997 +units=m +no_defs"), datum = NA) 
+
+#Precipitation raster and cropping
+rast<-brick("/Volumes/Data Drive/era_5/precip_mon/era5prcp.nc")
+aoi = usa
+t.aoi<-crop(rast, aoi)
+
+#pull out months used as predictors
+jan<-t.aoi[[grep(paste0(".01."),names(t.aoi),fixed=TRUE)]]
+feb<-t.aoi[[grep(paste0(".02."),names(t.aoi),fixed=TRUE)]]
+mar<-t.aoi[[grep(paste0(".03."),names(t.aoi),fixed=TRUE)]]
+apr<-t.aoi[[grep(paste0(".04."),names(t.aoi),fixed=TRUE)]]
+may<-t.aoi[[grep(paste0(".05."),names(t.aoi),fixed=TRUE)]]
+jun<-t.aoi[[grep(paste0(".06."),names(t.aoi),fixed=TRUE)]]
+jul<-t.aoi[[grep(paste0(".07."),names(t.aoi),fixed=TRUE)]]
+aug<-t.aoi[[grep(paste0(".08."),names(t.aoi),fixed=TRUE)]]
+sep<-t.aoi[[grep(".09.",names(t.aoi),fixed=TRUE)]]
+oct<-t.aoi[[grep(".10.",names(t.aoi),fixed=TRUE)]]
+
+#Aggregate months pre-may
+prcp=brick(stack(jan,feb,mar,apr))
+pyrs<-as.numeric(substr(names(prcp),2,5))
+
+outbrick = brick()
+for (year in unique(pyrs)) {
+  print(year)
+  hold<-sum(prcp[[which(pyrs==year)]])
+  outbrick<-stack(outbrick,hold)
+}
+
+prcp<-brick(outbrick)
+
+
+#Correlate JFMA in each state with may, jun, ... dec
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+#Correlation function
+corfun <- function(static_array, changing_array, month) {
+  # subset the changing array to include only months 5 through 12
+  changing_array_subset <- changing_array[changing_array$month==month,"count"]
+  
+  # calculate the correlation coefficient and p-value between the two arrays
+  correlation <- cor(static_array, changing_array_subset)
+  p_value <- cor.test(static_array, changing_array_subset)$p.value
+  
+  # return the correlation coefficient, p-value, and max month index
+  return(list(correlation = correlation, p_value = p_value, month_index = month))
+}
+
+
+
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+for (j in 1:48) {
+  state=statecode[j]
+  stateT=statename[grep(state, state.abb)]
+  
+  if (state=="DC") {
+    next()
+  }
+
+  print(state)
+  print(stateT)
+  
+  cr<-crop(prcp,usa[usa$ID==stateT,])
+  ms <- mask(cr,usa[usa$ID==stateT,])
+  
+  prcp_array<-colSums(values(ms),na.rm=T)
+  
+  hold = df[df$state==state,] # Subset State
+  
+  for (month_index in c(5:12)) {
+    
+    loop=corfun(prcp_array,hold,month_index)
+    loop=append(loop,list(predictor="precip"))
+    loop=append(loop,list(state=state))
+    
+    outFrame=rbind(outFrame,data.frame(loop))
+    
+    predFrame=rbind(predFrame,data.frame("month_index"=month_index,
+                               "predictor"="precip",
+                               "state"=state,
+                               "value"=prcp_array,
+                               "year"=unique(hold$year)))
+  }
+  
+}
+
+outFrame$sig = outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations sum precip",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+
+correlStore=c(correlStore,list(outFrame))
+predStore = append(predStore,list(predFrame))
+
+
+
+```
+
+
+
+```{r Era5 Humidity processing}
+#For April prediction
+usa <- st_as_sf(maps::map("state", fill=TRUE, plot =FALSE,wrap=c(0,360)))
+
+
+#Precipitation raster and cropping
+rast<-brick("/Volumes/Data Drive/era_5/rhum_mon/era5rhum.nc")
+aoi = usa
+t.aoi<-crop(rast, aoi)
+
+#pull out months used as predictors
+jan<-t.aoi[[grep(paste0(".01."),names(t.aoi),fixed=TRUE)]]
+feb<-t.aoi[[grep(paste0(".02."),names(t.aoi),fixed=TRUE)]]
+mar<-t.aoi[[grep(paste0(".03."),names(t.aoi),fixed=TRUE)]]
+apr<-t.aoi[[grep(paste0(".04."),names(t.aoi),fixed=TRUE)]]
+may<-t.aoi[[grep(paste0(".05."),names(t.aoi),fixed=TRUE)]]
+jun<-t.aoi[[grep(paste0(".06."),names(t.aoi),fixed=TRUE)]]
+jul<-t.aoi[[grep(paste0(".07."),names(t.aoi),fixed=TRUE)]]
+aug<-t.aoi[[grep(paste0(".08."),names(t.aoi),fixed=TRUE)]]
+sep<-t.aoi[[grep(".09.",names(t.aoi),fixed=TRUE)]]
+oct<-t.aoi[[grep(".10.",names(t.aoi),fixed=TRUE)]]
+
+#Aggregate months pre-may
+prcp=brick(stack(jan,feb,mar,apr))
+pyrs<-as.numeric(substr(names(prcp),2,5))
+
+outbrick = brick()
+for (year in unique(pyrs)) {
+  print(year)
+  hold<-mean(prcp[[which(pyrs==year)]])
+  outbrick<-stack(outbrick,hold)
+}
+
+prcp<-brick(outbrick)
+
+
+#Correlate JFMA in each state with may, jun, ... dec
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+#Correlation function
+corfun <- function(static_array, changing_array, month) {
+  # subset the changing array to include only months 5 through 12
+  changing_array_subset <- changing_array[changing_array$month==month,"count"]
+  
+  # calculate the correlation coefficient and p-value between the two arrays
+  correlation <- cor(static_array, changing_array_subset)
+  p_value <- cor.test(static_array, changing_array_subset)$p.value
+  
+  # return the correlation coefficient, p-value, and max month index
+  return(list(correlation = correlation, p_value = p_value, month_index = month))
+}
+
+
+
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+for (j in 1:48) {
+  state=statecode[j]
+  stateT=statename[grep(state, state.abb)]
+  
+  if (state=="DC") {
+    next()
+  }
+
+  print(state)
+  print(stateT)
+  
+  cr<-crop(prcp,usa[usa$ID==stateT,])
+  ms <- mask(cr,usa[usa$ID==stateT,])
+  
+  prcp_array<-colMeans(values(ms),na.rm=T)
+  
+  hold = df[df$state==state,] # Subset State
+  
+  for (month_index in c(5:12)) {
+    
+    loop=corfun(prcp_array,hold,month_index)
+    loop=append(loop,list(predictor="Rhum"))
+    loop=append(loop,list(state=state))
+    
+    outFrame=rbind(outFrame,data.frame(loop))
+    
+    predFrame=rbind(predFrame,data.frame("month_index"=month_index,
+                               "predictor"="Rhum",
+                               "state"=state,
+                               "value"=prcp_array,
+                               "year"=unique(hold$year)))
+    
+  }
+  
+}
+
+outFrame$sig = outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations mean Relative Humidity",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+
+correlStore=c(correlStore,list(outFrame))
+predStore = append(predStore,list(predFrame))
+
+
+```
+
+```{r Era5 Soil Moisture processing}
+
+#For April prediction
+usa <- st_as_sf(maps::map("state", fill=TRUE, plot =FALSE,wrap=c(0,360)))
+
+
+#Precipitation raster and cropping
+rast<-brick("/Volumes/Data Drive/era_5/volsm_mon/era5volsm.nc")
+aoi = usa
+t.aoi<-crop(rast, aoi)
+
+#pull out months used as predictors
+jan<-t.aoi[[grep(paste0(".01."),names(t.aoi),fixed=TRUE)]]
+feb<-t.aoi[[grep(paste0(".02."),names(t.aoi),fixed=TRUE)]]
+mar<-t.aoi[[grep(paste0(".03."),names(t.aoi),fixed=TRUE)]]
+apr<-t.aoi[[grep(paste0(".04."),names(t.aoi),fixed=TRUE)]]
+may<-t.aoi[[grep(paste0(".05."),names(t.aoi),fixed=TRUE)]]
+jun<-t.aoi[[grep(paste0(".06."),names(t.aoi),fixed=TRUE)]]
+jul<-t.aoi[[grep(paste0(".07."),names(t.aoi),fixed=TRUE)]]
+aug<-t.aoi[[grep(paste0(".08."),names(t.aoi),fixed=TRUE)]]
+sep<-t.aoi[[grep(".09.",names(t.aoi),fixed=TRUE)]]
+oct<-t.aoi[[grep(".10.",names(t.aoi),fixed=TRUE)]]
+
+#Aggregate months pre-may
+prcp=brick(stack(jan,feb,mar,apr))
+pyrs<-as.numeric(substr(names(prcp),2,5))
+
+outbrick = brick()
+for (year in unique(pyrs)) {
+  print(year)
+  hold<-mean(prcp[[which(pyrs==year)]])
+  outbrick<-stack(outbrick,hold)
+}
+
+prcp<-brick(outbrick)
+
+
+#Correlate JFMA in each state with may, jun, ... dec
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+#Correlation function
+corfun <- function(static_array, changing_array, month) {
+  # subset the changing array to include only months 5 through 12
+  changing_array_subset <- changing_array[changing_array$month==month,"count"]
+  
+  # calculate the correlation coefficient and p-value between the two arrays
+  correlation <- cor(static_array, changing_array_subset)
+  p_value <- cor.test(static_array, changing_array_subset)$p.value
+  
+  # return the correlation coefficient, p-value, and max month index
+  return(list(correlation = correlation, p_value = p_value, month_index = month))
+}
+
+
+
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+for (j in 1:48) {
+  state=statecode[j]
+  stateT=statename[grep(state, state.abb)]
+  
+  if (state=="DC") {
+    next()
+  }
+
+  print(state)
+  print(stateT)
+  
+  cr<-crop(prcp,usa[usa$ID==stateT,])
+  ms <- mask(cr,usa[usa$ID==stateT,])
+  
+  prcp_array<-colMeans(values(ms),na.rm=T)
+  
+  hold = df[df$state==state,] # Subset State
+  
+  for (month_index in c(5:12)) {
+    
+    loop=corfun(prcp_array,hold,month_index)
+    loop=append(loop,list(predictor="soilm"))
+    loop=append(loop,list(state=state))
+    
+    outFrame=rbind(outFrame,data.frame(loop))
+    
+    predFrame=rbind(predFrame,data.frame("month_index"=month_index,
+                               "predictor"="soilm",
+                               "state"=state,
+                               "value"=prcp_array,
+                               "year"=unique(hold$year)))
+  }
+  
+}
+
+outFrame$sig = outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations mean Volumetric Soil Moisture",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+
+
+correlStore=c(correlStore,list(outFrame))
+predStore = append(predStore,list(predFrame))
+
+
+```
+
+```{r WNV cluster analysis}
+library(factoextra) 
+library(tidyr)
+library(zoo)
+
+z=df[,c("count","state")]
+z$state=tolower(state.name[match(z$state,state.abb)])
+
+z$yearmonth =  as.yearmon(paste(df$year, df$month), "%Y %m")
+z=spread(z,key="state",value="count")
+
+norm = scale(z[,-1],center=TRUE,scale=TRUE)
+norm<-t(norm)
+
+k <- kmeans(norm, centers = 4, nstart = 25)
+fviz_cluster(k, data = norm)
+
+usa$cluster = k$cluster
+
+plot(usa["cluster"])
+
+set.seed(123)
+fviz_nbclust(norm, kmeans, method = "wss")
+fviz_nbclust(norm, kmeans, method = "silhouette")
+
+
+clusters = hclust(dist(norm))
+
+clustercut = cutree(clusters,4)
+
+usa$cluster<-as.factor(clustercut)
+plot(usa["cluster"])
+
+```
+
+
+
+```{r Get anomalies SST data}
+library(lubridate)
+rast = brick('/Volumes/Data Drive/era_5/sst_mon/sst.nc')
+t.aoi = rast
+#pull out months used as predictors
+jan<-t.aoi[[grep(paste0(".01."),names(t.aoi),fixed=TRUE)]]
+feb<-t.aoi[[grep(paste0(".02."),names(t.aoi),fixed=TRUE)]]
+mar<-t.aoi[[grep(paste0(".03."),names(t.aoi),fixed=TRUE)]]
+apr<-t.aoi[[grep(paste0(".04."),names(t.aoi),fixed=TRUE)]]
+may<-t.aoi[[grep(paste0(".05."),names(t.aoi),fixed=TRUE)]]
+jun<-t.aoi[[grep(paste0(".06."),names(t.aoi),fixed=TRUE)]]
+jul<-t.aoi[[grep(paste0(".07."),names(t.aoi),fixed=TRUE)]]
+aug<-t.aoi[[grep(paste0(".08."),names(t.aoi),fixed=TRUE)]]
+sep<-t.aoi[[grep(".09.",names(t.aoi),fixed=TRUE)]]
+oct<-t.aoi[[grep(".10.",names(t.aoi),fixed=TRUE)]]
+
+#Aggregate months pre-may
+sst=brick(stack(feb,mar,apr))
+yrs<-as.numeric(substr(names(sst),2,5))
+
+anom=sst-mean(sst)
+names(anom) = yrs
+yrs=substr(names(anom),2,5)
+
+outbrick = brick()
+for (year in unique(yrs)) {
+  print(year)
+  hold<-mean(anom[[which(yrs==year)]])
+  outbrick<-stack(outbrick,hold)
+}
+
+anom<-brick(outbrick)
+
+yrs = c(2000:2022)
+names(anom)=yrs
+
+writeRaster(anom,'/Volumes/Data Drive/era_5/sst_mon/sst_anom_fma.grd',format="raster",overwrite=TRUE)
+
+mean_sst=mean(sst)
+writeRaster(mean_sst,'/Volumes/Data Drive/era_5/sst_mon/sst_mean_fma.grd',format="raster",overwrite=TRUE)
+
+```
+
+
+```{r SST correlation, warning=FALSE}
+
+anom=brick('/Volumes/Data Drive/era_5/sst_mon/sst_anom_fma.grd')
+pac <- extent(100, 250, -10, 60)
+anom=crop(anom,pac)
+plot(anom[[1]])
+
+p_pca=prcomp(na.omit(values(anom)))
+ppc12=p_pca$rotation[,c(1:2)]
+
+
+anom=brick('/Volumes/Data Drive/era_5/sst_mon/sst_anom_fma.grd')
+aac <- extent(260, 350, 15, 60)
+anom=crop(anom,aac)
+plot(anom[[1]])
+
+a_pca=prcomp(na.omit(values(anom)))
+apc12=p_pca$rotation[,c(1:2)]
+
+
+allpc=cbind(ppc12,apc12)
+
+pcnames = c("sst_pac_pc1","sst_pac_pc2","sst_aac_pc1","sst_aac_pc2")
+
+#Correlation function
+corfun <- function(static_array, changing_array, month) {
+  # subset the changing array to include only months 5 through 12
+  changing_array_subset <- changing_array[changing_array$month==month,"count"]
+
+  correlation <- cor(static_array, changing_array_subset)
+  p_value <- cor.test(static_array, changing_array_subset)$p.value
+  # return the correlation coefficient, p-value, and max month index
+  return(list(correlation = correlation, p_value = p_value, month_index = month))
+}
+
+
+#Correlate JFMA in each state with may, jun, ... dec
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+
+for (j in 1:48) {
+  state=statecode[j]
+  stateT=statename[grep(state, state.abb)]
+  
+  if (state=="DC") {
+    next()
+  }
+
+  print(state)
+  print(stateT)
+  
+  hold = df[df$state==state,] # Subset State
+  for (pc in c(1:4)) {
+    
+    pcvar=allpc[,pc]
+    
+    for (month_index in c(5:12)) {
+      
+    loop=corfun(pcvar,hold,month_index)
+    loop=append(loop,list(predictor=pcnames[pc]))
+    loop=append(loop,list(state=state))
+      
+    outFrame=rbind(outFrame,data.frame(loop))
+    
+    predFrame=rbind(predFrame,data.frame("month_index"=month_index,
+                               "predictor"=pcnames[pc],
+                               "state"=state,
+                               "value"=pcvar,
+                               "year"=unique(hold$year)))
+    
+    }
+  }
+}
+
+
+
+
+
+
+outFrame$sig = outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations mean Atlantic SST pc2",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+correlStore=c(correlStore,list(outFrame))
+
+predStore = append(predStore,list(predFrame))
+
+```
+
+
+
+
+
+```{r Mosquito Abundance}
+
+msq=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/abundance.csv")
+
+msq$femalePerTn=msq$num_adult_females_collected/msq$num_trap_nights
+
+msq=msq %>% filter(month %in% c(1,2,3,4)) %>% group_by(state, year) %>% summarize(avgMsqAbd=mean(femalePerTn))
+
+
+#Correlation function
+corfun <- function(static_array, changing_array, month) {
+  # subset the changing array to include only months 5 through 12
+  changing_array_subset <- changing_array[changing_array$month==month,"count"]
+  
+  if (length(static_array) <= 2| length(changing_array_subset) <= 2) {
+    # Return NA if there are too few observations
+    correlation <- NA
+    p_value<-NA
+  } else {
+    # Calculate correlation if there are enough observations
+    # calculate the correlation coefficient and p-value between the two arrays
+  correlation <- cor(static_array, changing_array_subset)
+  p_value <- cor.test(static_array, changing_array_subset)$p.value
+  }
+  
+
+
+  # return the correlation coefficient, p-value, and max month index
+  return(list(correlation = correlation, p_value = p_value, month_index = month))
+}
+
+#Correlate JFMA in each state with may, jun, ... dec
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+msq$state=tolower(msq$state)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+for (j in 1:48) {
+  state=statecode[j]
+  stateT=statename[grep(state, state.abb)]
+  
+  if (state=="DC") {
+    next()
+  }
+
+  print(state)
+  print(stateT)
+  
+
+  array = msq[msq$state==stateT,]
+  print(nrow(array))
+  
+  hold = df[df$state==state,] # Subset State
+  
+  hold=hold[hold$year %in% array$year,] # Subset to msq data years
+  array=array[array$year %in% hold$year,] # Subset to msq data years
+  
+  for (month_index in c(5:12)) {
+    
+    loop=corfun(array$avgMsqAbd,hold,month_index)
+    loop=append(loop,list(predictor="mosquito_abundance"))
+    loop=append(loop,list(state=state))
+    
+    outFrame=rbind(outFrame,data.frame(loop))
+    
+    if (nrow(array)>0) {
+      
+      predFrame=rbind(predFrame,data.frame("month_index"=month_index,
+                           "predictor"="mosquito_abundance",
+                           "state"=state,
+                           "value"=array$avgMsqAbd,
+                           "year"=unique(hold$year)))
+      
+    }
+
+  }
+  
+}
+
+
+outFrame$sig = outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+
+outFrame
+
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations average mosquito abundance / trap night",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+correlStore=c(correlStore,list(outFrame))
+predStore = append(predStore,list(predFrame))
+
+
+```
+
+
+
+```{r Mosquito Infection}
+msq=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/infection.csv")
+
+msq$wnvPerMsq=msq$num_pools_wnv/msq$num_mosquitoes
+
+msq=msq %>% filter(month %in% c(1,2,3,4)) %>% group_by(state, year) %>% summarize(avgMsqInf=mean(wnvPerMsq))
+
+
+#Correlation function
+corfun <- function(static_array, changing_array, month) {
+  # subset the changing array to include only months 5 through 12
+  changing_array_subset <- changing_array[changing_array$month==month,"count"]
+  
+  if (length(static_array) <= 2| length(changing_array_subset) <= 2) {
+    # Return NA if there are too few observations
+    correlation <- NA
+    p_value<-NA
+  } else {
+    # Calculate correlation if there are enough observations
+    # calculate the correlation coefficient and p-value between the two arrays
+  correlation <- cor(static_array, changing_array_subset)
+  p_value <- cor.test(static_array, changing_array_subset)$p.value
+  }
+  
+
+
+  # return the correlation coefficient, p-value, and max month index
+  return(list(correlation = correlation, p_value = p_value, month_index = month))
+}
+
+#Correlate JFMA in each state with may, jun, ... dec
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+msq$state=tolower(msq$state)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+
+outFrame=data.frame("correlation"=NA,"p_value"=NA,"month_index"=NA,"predictor"=NA,"state"=NA)
+predFrame = data.frame("month_index"=NA,"predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+for (j in 1:48) {
+  state=statecode[j]
+  stateT=statename[grep(state, state.abb)]
+  
+  if (state=="DC") {
+    next()
+  }
+
+  print(state)
+  print(stateT)
+  
+
+  array = msq[msq$state==stateT,]
+  print(nrow(array))
+  
+  hold = df[df$state==state,] # Subset State
+  
+  hold=hold[hold$year %in% array$year,] # Subset to msq data years
+  array=array[array$year %in% hold$year,] # Subset to msq data years
+  
+  for (month_index in c(5:12)) {
+    
+    loop=corfun(array$avgMsqInf,hold,month_index)
+    loop=append(loop,list(predictor="mosquito_infection"))
+    loop=append(loop,list(state=state))
+    
+    outFrame=rbind(outFrame,data.frame(loop))
+    
+    if (nrow(array)>0) {
+      
+      predFrame=rbind(predFrame,data.frame("month_index"=month_index,
+                           "predictor"="mosquito_infection",
+                           "state"=state,
+                           "value"=array$avgMsqInf,
+                           "year"=unique(hold$year)))
+      
+    }
+  }
+  
+}
+
+
+outFrame$sig = outFrame$p_value<0.05
+outFrame=outFrame[-1,]
+
+
+ggplot() +
+  geom_tile(data = outFrame, aes(x = state, y = as.factor(month_index), fill = correlation)) +
+  scale_fill_gradient2(limits=c(-1,1),low = "blue", high = "red",mid="white") +
+  theme_bw() +
+  labs(title = "Correlations average mosquito infection / pool",
+       x = "State",
+       y = "Predictand month") +
+  geom_point(data = outFrame, aes(x = state, y = as.factor(month_index), shape = sig)) +
+    scale_shape_manual(values=c("FALSE"=4,"TRUE"=20))
+
+correlStore=c(correlStore,list(outFrame))
+predStore = append(predStore,list(predFrame))
+
+```
+```{r}
+
+```
+
+
+```{r 2023 Data, warning=FALSE}
+pred23 = list()
+
+
+usa <- st_as_sf(maps::map("state", fill=TRUE, plot =FALSE))
+aoi = usa
+
+df<-read.csv("WNV_forecasting_challenge_state-month_cases.csv")
+
+#Figure out better automation for files
+files=list.files("/Volumes/Data Drive/era_5/2023",full.names = TRUE)
+files=files[c(1,2,3,7,8)]
+
+
+precip = files[1]
+Rhum = files[2]
+temp = files[5]
+one_step_processing = c(precip,Rhum,temp)
+
+  
+smfiles=list.files("/Volumes/Data Drive/era_5/2023",full.names = TRUE)
+smfiles=smfiles[c(3:6)]
+soilm_processing<-files[3]
+
+
+sst_processing<-files[4]
+
+#State names
+statename=c(state.name,"district of columbia")
+statename=tolower(statename)
+
+statecode=unique(df$state)
+statecode=statecode[statecode!="AL"]
+
+files = c(precip,Rhum,temp,soilm_processing,sst_processing)
+
+#Loop
+for (open in files) {
+  
+print(open)
+predFrame = data.frame("predictor"=NA,"state"=NA,"value"=NA,"year"=NA)
+
+  if (open %in% one_step_processing) {
+    rast=brick(open)
+    t.aoi<-crop(rast, aoi)
+    r_avg=mean(t.aoi,na.rm=T)
+    
+      if (open==precip) {metric = "precip"}
+    
+      if (open == Rhum) {metric = "Rhum"}
+    
+      if (open==temp) {metric = "temp"}
+  }
+
+  else if (open == soilm_processing){
+    s1 = mean(crop(brick(smfiles[1]),aoi),na.rm=T)
+    s2 = mean(crop(brick(smfiles[2]),aoi),na.rm=T)
+    s3 = mean(crop(brick(smfiles[3]),aoi),na.rm=T)
+    s4 = mean(crop(brick(smfiles[4]),aoi),na.rm=T)
+    
+    r_avg = mean(brick(s1,s2,s3,s4),na.rm=T)
+    metric="soilm"
+  }
+  
+  else if (open %in% sst_processing){
+    mean_sst=raster('/Volumes/Data Drive/era_5/sst_mon/sst_mean_fma.grd')
+    rast = brick(open)
+    anom=brick('/Volumes/Data Drive/era_5/sst_mon/sst_anom_fma.grd')
+    
+    mean_sst=crop(mean_sst, extent(-0.125, 359.875, -10.125, 60.125))
+    rast<-setExtent(rast,extent(mean_sst))
+    
+    #Pacific
+    pac <- extent(100, 250, -10, 60)
+    pac=crop(rast,pac)
+    anom23pac=mean(rast - crop(mean_sst,pac),na.rm=T)
+    anompac = crop(anom,pac)
+    pac=stack(anompac,anom23pac)
+    
+    #PCA
+    p_pca=prcomp(na.omit(values(pac)))
+    ppc12=p_pca$rotation[,c(1:2)]
+  
+    aac <- extent(260, 350, 15, 60)
+    aac=crop(rast,aac)
+    anom23aac=mean(rast - crop(mean_sst,aac),na.rm=T)
+    anomaac = crop(anom,aac)
+    aac=stack(anomaac,anom23aac)
+    
+    #PCA -Atlantic
+    a_pca=prcomp(na.omit(values(aac)))
+    apc12=a_pca$rotation[,c(1:2)]
+    
+    
+    #Append Pacific PCs
+    predFrame=data.frame("predictor"="sst_pac_pc1","state"=statecode,"value"=ppc12[24,1],"year"=2023)
+    pred23=append(pred23,list(predFrame))
+    predFrame=data.frame("predictor"="sst_pac_pc2","state"=statecode,"value"=ppc12[24,2],"year"=2023)
+    pred23=append(pred23,list(predFrame))
+    
+    #Append Atlantic PCs
+    predFrame=data.frame("predictor"="sst_aac_pc1","state"=statecode,"value"=ppc12[24,1],"year"=2023)
+    pred23=append(pred23,list(predFrame))
+    predFrame=data.frame("predictor"="sst_aac_pc2","state"=statecode,"value"=apc12[24,2],"year"=2023)
+    pred23=append(pred23,list(predFrame))
+    
+    #Skip below
+    next()
+  }
+
+
+
+    for (j in 1:48) {
+      state=statecode[j]
+      stateT=statename[grep(state, state.abb)]
+      
+      if (state=="DC") {
+        next()
+      }
+    
+      
+      cr<-crop(r_avg,usa[usa$ID==stateT,])
+      ms <- mask(cr,usa[usa$ID==stateT,])
+      array<-mean(values(ms),na.rm=T)
+      
+      predFrame=rbind(predFrame,data.frame(
+                                   "predictor"=metric,
+                                   "state"=state,
+                                   "value"=array,
+                                   "year"=2023))
+      }
+  
+  pred23=append(pred23,list(predFrame))
+
+}
+
+pred23
+
+pred23=bind_rows(pred23, .id = "column_label")
+#pred23=pred23[-c(337:384),]
+write.csv(pred23,"/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictor_values23.csv")
+
+pred23Frame=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictor_values23.csv")
+pred23Frame=cbind(pred23Frame,month=NA)
+pred23Frame=pred23Frame[,-c(1,2)]
+
+#Lag1cor
+lag1 = df %>% filter(year==2022)
+predFrame=data.frame("predictor"="lag1cor","state"=lag1$state,"value"=lag1$count,"year"=2023,"month"=lag1$month)
+pred23Frame=rbind(pred23Frame,predFrame)
+
+#Abundance
+msq=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/abundance.csv")
+msq$femalePerTn=msq$num_adult_females_collected/msq$num_trap_nights
+msq=msq %>% filter(month %in% c(1,2,3,4)) %>% group_by(state, year) %>% summarize(avgMsqAbd=mean(femalePerTn))
+msq23=msq %>% filter(year==2023)
+msq23$state = state.abb[match(msq23$state,state.name)]
+predFrame=data.frame("predictor"="mosquito_abundance","state"=msq23$state,"value"=msq23$avgMsqAbd,"year"=2023,"month"=NA)
+pred23Frame=rbind(pred23Frame,predFrame)
+
+#Infection
+msq=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/infection.csv")
+msq$wnvPerMsq=msq$num_pools_wnv/msq$num_mosquitoes
+msq=msq %>% filter(month %in% c(1,2,3,4)) %>% group_by(state, year) %>% summarize(avgMsqInf=mean(wnvPerMsq))
+msq23=msq %>% filter(year==2023)
+msq23$state = state.abb[match(msq23$state,state.name)]
+predFrame=data.frame("predictor"="mosquito_infection","state"=msq23$state,"value"=msq23$avgMsqInf,"year"=2023,"month"=NA)
+pred23Frame=rbind(pred23Frame,predFrame)
+
+write.csv(pred23Frame,"/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictor_values23.csv")
+```
+
+
+```{r}
+#corFrame=bind_rows(correlStore, .id = "column_label")
+#write.csv(corFrame,"/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictors.csv")
+
+#predFrame=bind_rows(predStore, .id = "column_label")
+#write.csv(predFrame,"/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictor_values.csv")
+
+#pred23=bind_rows(pred23, .id = "column_label")
+#pred23=pred23[-c(337:384),]
+#write.csv(pred23,"/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictor_values23.csv")
+
+```
+
+
+```{r Read in predictors dataframe}
+library(MASS)
+library(caret)
+library(Metrics)
+
+prediction_list = list()
+
+#Functions
+#Draw from poisson function based on long term averages
+fit_and_draw_sample <- function(data, nsamples, dist) {
+  
+  if (dist=="negative binomial") {
+    fitg <- fitdistr(data, dist)   
+    params <- fitg$estimate
+    print(params)
+    size=params[1]
+    mu=as.numeric(params[2])
+    return (rnbinom(nsamples, mu = mu, size =size))
+  }
+  
+  if (dist=="normal") {
+    fitg <- fitdistr(data, dist)   
+    params <- fitg$estimate
+    print(params)
+    mean=params[1]
+    sd=as.numeric(params[2])
+    return (rnorm(nsamples, mean = mean, sd =sd))
+  }
+
+}
+
+
+#Read in Data
+setwd("/Users/maxbeal/Desktop/CDC_ForecastChallenge/")
+df<-read.csv("WNV_forecasting_challenge_state-month_cases.csv")
+
+corFrame=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictors.csv")
+corFrame=corFrame[,-1]
+
+predFrame=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictor_values.csv")
+predFrame=predFrame[-c(1,2),]
+      
+pred23Frame=read.csv("/Users/maxbeal/Desktop/CDC_ForecastChallenge/Data/predictor_values23.csv")
+pred23Frame[is.na(pred23Frame$month),"month"] = "None"
+
+
+#Grab Significant predictors
+sigpreds=na.omit(corFrame[corFrame$sig==TRUE,])
+
+monthstate_predictors=unique(sigpreds[,c("month_index","state")])
+monthstate = df %>% filter(month>=5) %>% dplyr::select(month,state) %>% unique()
+
+monthstate$BuildModel = paste(monthstate$month,monthstate$state) %in% paste(monthstate_predictors$month,monthstate_predictors$state)
+
+
+
+
+#Create Final prediction frame
+predictionFrame=data.frame("forecast_date"=NA, "target"=NA, "target_end_date"=NA, "location"=NA,  "type"=NA, "quantile"=NA, "value"=NA)
+
+#Start Loop to create predictions
+for (mon in unique(monthstate$month)) {
+  for (st in unique(monthstate$state)) {
+    
+    #Variable that says whether or not predictors are available
+    choose_model  = monthstate %>% filter(month==mon) %>% filter(state==st)
+    all_zeroes = sum(df %>% filter(month==mon,state==st) %>% pull(count))==0
+    
+    
+    #If there are predictors to build a model, do so
+    if (choose_model$BuildModel==TRUE & all_zeroes==FALSE) {
+      print("at least one predictor, building model...")
+      hold = df %>% filter(month==mon) %>% filter(state==st) 
+      
+      pred_names=sigpreds %>% filter(month_index==mon) %>% filter(state==st) %>% pull(predictor) %>% unique()
+      #print(pred_names)
+      set.seed(123)
+      #Model
+      
+      predVals = predFrame %>% filter(month_index==mon) %>% filter(state==st) %>% filter(predictor %in% pred_names)
+      wide=predVals %>% dplyr::select(predictor,value,year) %>% spread(key=predictor,value=value)
+      predictors = wide %>% dplyr::select(any_of(pred_names),year)
+
+      
+      pred_df = merge(hold,predictors,by="year")
+      pred_df = pred_df %>% dplyr::select(any_of(pred_names),count)
+      train = na.omit(pred_df)
+      
+      
+      #5 folds repeat 3 times
+      control <- trainControl(method='repeatedcv', 
+                              number=3, 
+                              repeats=5,
+                              savePredictions = TRUE)
+      
+      #PCR
+      if (ncol(train)>2) {
+        pcr <- train(
+        count~., 
+          data = train, method = "pcr",
+          scale = TRUE,
+          trControl = control
+        )
+      }
+      
+      #LM
+      if (ncol(train)<=2){
+          pcr <- train(
+          count~., 
+          data = train, method = "lm",
+          trControl = control
+        )
+      }
+      
+      #Get errors from prediction and fit normal distribution
+      err=(pcr$pred$obs-round(pcr$pred$pred))
+      errdist=fit_and_draw_sample(err,100,"normal")
+      
+      #Get values for 2023 prediction
+      pred23Vals = pred23Frame %>% filter(predictor %in% pred_names) %>% 
+        filter(state==st) %>% filter(month=="None"|month==mon)
+      wide23=pred23Vals %>% dplyr::select(predictor,value) %>% spread(key=predictor,value=value)
+      
+
+      case_prediction=predict(pcr, wide23)
+      
+      #Get quantiles from error distribution plus prediction, don't let values go below 0
+      q_predictions = case_prediction+quantile(errdist,c(0.01, 0.025, seq(0.05, 0.95, by = 0.05), 0.975, 0.99))
+      q_predictions[q_predictions<0] = 0
+      
+      target=paste0(month.abb[mon]," WNV neuroinvasive disease cases") 
+      target_end_date=ceiling_date(ym(paste0("2023-",mon)), 'month') - days(1)
+      
+      out=data.frame("forecast_date"="2023-04-30", 
+           "target"=target, 
+           "target_end_date"=target_end_date, 
+           "location"=st,  
+           "type"="quantile", 
+           "quantile"=c(0.01, 0.025, seq(0.05, 0.95, by = 0.05), 0.975, 0.99), 
+           "value"=q_predictions)
+      
+      prediction_list = append(prediction_list,list(out))
+    }
+    
+    #If there are no predictors for a model, use long term averages
+    else {
+      print(paste0(mon," ", st,":"))
+      print("No predictors, defaulting to long term average")
+      
+      hold = df %>% filter(month==mon) %>% filter(state==st) 
+      
+      if (sum(hold$count)==0) {
+        q_predictions = rep(0,23)
+      }
+      
+      
+      if (sum(hold$count)>0) {
+        
+        draws<-fit_and_draw_sample(hold$count,100,"negative binomial")
+        q_predictions = quantile(draws,c(0.01, 0.025, seq(0.05, 0.95, by = 0.05), 0.975, 0.99))
+        
+      }
+
+      
+      target=paste0(month.abb[mon]," WNV neuroinvasive disease cases") 
+      target_end_date=ceiling_date(ym(paste0("2023-",mon)), 'month') - days(1)
+      
+      out=data.frame("forecast_date"="2023-04-30", 
+                 "target"=target, 
+                 "target_end_date"=target_end_date, 
+                 "location"=st,  
+                 "type"="quantile", 
+                 "quantile"=c(0.01, 0.025, seq(0.05, 0.95, by = 0.05), 0.975, 0.99), 
+                 "value"=q_predictions)
+      
+      prediction_list = append(prediction_list,list(out))
+      
+    }
+      
+    }
+    
+  }
+  
+
+
+prediction_list_all = bind_rows(prediction_list, .id = "column_label")
+prediction_list_all$value<-round(prediction_list_all$value,3)
+
+#write.csv(prediction_list_all[,-1],"/Users/maxbeal/Desktop/CDC_ForecastChallenge/2023-04-30-UWmadison-WSSmodel.csv")
+
+
+
+```
+
+
+```{r}
+
+
+
+
+
+
+
+
+set.seed(123)
+#Model
+
+pred_names=sigpreds %>% filter(month_index==mon) %>% filter(state==st) %>% pull(predictor) %>% unique()
+print(pred_names)
+
+predVals = predFrame %>% filter(month_index==mon) %>% filter(state==st) %>% filter(predictor %in% pred_names)
+wide=predVals %>% spread(key=predictor,value=value)
+predictors = wide %>% dplyr::select(any_of(pred_names),year)
+
+df = merge(hold,predictors,by="year")
+df = df %>% dplyr::select(any_of(pred_names),count)
+train = df
+
+#5 folds repeat 3 times
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=5,
+                        savePredictions = TRUE)
+
+#PCR
+if (ncol(train)>2) {
+  pcr <- train(
+  count~., 
+    data = train, method = "pcr",
+    scale = TRUE,
+    trControl = control
+  )
+}
+
+#LM
+if (ncol(train)<=2){
+    pcr <- train(
+    count~., 
+    data = train, method = "lm",
+    trControl = control
+  )
+}
+
+#Get errors from prediction and fit normal distribution
+err=(pcr$pred$obs-round(pcr$pred$pred))
+errdist=fit_and_draw_sample(err,100,"normal")
+
+pred23Vals = pred23Frame %>% filter(predictor %in% pred_names) %>% filter(state==st) %>% filter(month=="None"|month==mon)
+wide23=pred23Vals %>% spread(key=predictor,value=value)
+
+case_prediction=predict(pcr, wide23)
+
+#Get quantiles from error distribution plus prediction, don't let values go below 0
+q_predictions = case_prediction+quantile(errdist,c(0.01, 0.025, seq(0.05, 0.95, by = 0.05), 0.975, 0.99))
+q_predictions[q_predictions<0] = 0
+
+barplot(q_predictions)
+
+
+
+
+```
+
